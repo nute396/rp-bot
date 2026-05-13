@@ -195,3 +195,7 @@ async def webhook(req: Request):
 async def startup():
     await bot.set_webhook(f"{WEBHOOK_URL}/")
     print("Webhook set!")
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("bot:app", host="0.0.0.0", port=10000)
+
