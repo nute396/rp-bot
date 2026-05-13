@@ -1,172 +1,162 @@
-import os
-import time
+import asyncio
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-    ConversationHandler,
-)
+import time
 
-# =======================
-# CONFIG
-# =======================
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "ВСТАВ_ТОКЕН"
 
-ADMIN_IDS = [123456789]  # <-- заміни на свій Telegram ID
-
-FACTION_CHATS = {
-    "ДБР": -5042162172,
-    "НПС": -1003797046749,
-    "СБС": -5173873867,
-    "НАБС": -5156309034,
-}
-
-QUESTIONS = [
-    "Кількість XP у вас за поліцію:",
-    "Чи маєте досвід роботи?",
-    "Ваш вік:",
-    "Ваша активність (1-10):",
-    "Чому хочете вступити?",
-]
-
-# антиспам
-last_msg_time = {}
-
-CHOOSE, ASKING = range(2)
+ADMIN_IDS = [123456789]  # <-- свій Telegram ID сюди
 
 logging.basicConfig(level=logging.INFO)
 
-# =======================
-# START
-# =======================
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🔎 ДБР", callback_data="ДБР")],
-        [InlineKeyboardButton("👮 НПС", callback_data="НПС")],
-        [InlineKeyboardButton("🛡 СБС", callback_data="СБС")],
-        [InlineKeyboardButton("⚖️ НАБС", callback_data="НАБС")],
-    ]
+# =========================
+# DATA
+# =========================
 
-    await update.message.reply_text(
-        "👋 Обери фракцію:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-    return CHOOSE
+FACTIONS = ["ДБР", "НПС", "СБС", "НАБС"]
 
-# =======================
-# FACTION SELECT
-# =======================
+QUESTIONS = [
+    "Кількість XP у вас:",
+    "Чи маєте досвід?",
+    "Ваша активність (1-10):",
+    "Ваш вік:",
+    "Чому хочете вступити?:"
+]
 
-async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+user_state = {}
+cooldowns = {}
 
-    context.user_data["faction"] = q.data
-    context.user_data["answers"] = []
-    context.user_data["index"] = 0
+# =========================
+# ANTI SPAM
+# =========================
 
-    await q.edit_message_text(
-        f"✅ Фракція: {q.data}\n\n{QUESTIONS[0]}"
-    )
-    return ASKING
-
-# =======================
-# ANSWERS + ANTI-SPAM
-# =======================
-
-async def answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+def is_spam(user_id):
     now = time.time()
+    last = cooldowns.get(user_id, 0)
 
-    # антиспам (1 повідомлення / 2 сек)
-    if user_id in last_msg_time and now - last_msg_time[user_id] < 2:
-        await update.message.reply_text("⏳ Не спам!")
-        return ASKING
+    if now - last < 3:
+        return True
 
-    last_msg_time[user_id] = now
+    cooldowns[user_id] = now
+    return False
 
-    answers = context.user_data["answers"]
-    index = context.user_data["index"]
+# =========================
+# START MENU
+# =========================
 
-    answers.append(update.message.text)
-    index += 1
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    if is_spam(message.from_user.id):
+        return
 
-    context.user_data["answers"] = answers
-    context.user_data["index"] = index
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 ДБР", callback_data="ДБР")],
+        [InlineKeyboardButton(text="👮 НПС", callback_data="НПС")],
+        [InlineKeyboardButton(text="🛡 СБС", callback_data="СБС")],
+        [InlineKeyboardButton(text="⚖️ НАБС", callback_data="НАБС")]
+    ])
 
-    if index < len(QUESTIONS):
-        await update.message.reply_text(QUESTIONS[index])
-        return ASKING
+    await message.answer("🔥 Обери фракцію:", reply_markup=kb)
 
-    await finish(update, context)
-    return ConversationHandler.END
+# =========================
+# FACTION SELECT
+# =========================
 
-# =======================
-# FINISH + SEND
-# =======================
+@dp.callback_query(F.data.in_(FACTIONS))
+async def faction(call: types.CallbackQuery):
+    user_state[call.from_user.id] = {
+        "faction": call.data,
+        "q": 0,
+        "answers": []
+    }
 
-async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    faction = context.user_data["faction"]
-    answers = context.user_data["answers"]
-
-    text = f"📩 Нова заявка: {faction}\n\n"
-
-    for q, a in zip(QUESTIONS, answers):
-        text += f"{q}\n➡️ {a}\n\n"
-
-    # відправка у фракцію
-    await context.bot.send_message(
-        chat_id=FACTION_CHATS[faction],
-        text=text,
+    await call.message.answer(
+        f"✅ Ти обрав {call.data}\n\nПочинаємо анкету..."
     )
 
-    # адмінам
-    for admin in ADMIN_IDS:
-        await context.bot.send_message(
-            chat_id=admin,
-            text="🚨 Нова заявка відправлена"
+    await ask_question(call.from_user.id)
+    await call.answer()
+
+# =========================
+# ASK QUESTION
+# =========================
+
+async def ask_question(user_id):
+    state = user_state[user_id]
+    q_index = state["q"]
+
+    if q_index < len(QUESTIONS):
+        await bot.send_message(
+            user_id,
+            QUESTIONS[q_index]
         )
+    else:
+        await finish(user_id)
 
-    await update.message.reply_text("✅ Заявку відправлено!")
+# =========================
+# ANSWERS
+# =========================
 
-# =======================
-# CANCEL
-# =======================
+@dp.message()
+async def answer(message: types.Message):
+    user_id = message.from_user.id
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Скасовано")
-    return ConversationHandler.END
+    if user_id not in user_state:
+        return
 
-# =======================
-# MAIN
-# =======================
+    if is_spam(user_id):
+        return
 
-def main():
-    if not BOT_TOKEN:
-        raise Exception("BOT_TOKEN missing")
+    state = user_state[user_id]
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    state["answers"].append(message.text)
+    state["q"] += 1
 
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHOOSE: [CallbackQueryHandler(choose)],
-            ASKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, answer)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
+    await ask_question(user_id)
 
-    app.add_handler(conv)
+# =========================
+# FINISH
+# =========================
 
-    print("Bot running...")
-    app.run_polling()
+async def finish(user_id):
+    state = user_state[user_id]
+
+    text = f"🚨 НОВА ЗАЯВКА\nФракція: {state['faction']}\n\n"
+
+    for i, ans in enumerate(state["answers"]):
+        text += f"{QUESTIONS[i]} {ans}\n"
+
+    # send to admins
+    for admin in ADMIN_IDS:
+        await bot.send_message(admin, text)
+
+    await bot.send_message(user_id, "✅ Заявку подано!")
+
+    user_state.pop(user_id, None)
+
+# =========================
+# ADMIN PANEL
+# =========================
+
+@dp.message(Command("admin"))
+async def admin(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    await message.answer("🛠 Адмін панель активна")
+
+# =========================
+# RUN
+# =========================
+
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
