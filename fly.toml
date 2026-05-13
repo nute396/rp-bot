@@ -1,0 +1,10 @@
+app = "rp-bot"
+
+[build]
+builder = "paketobuildpacks/builder:base"
+
+[processes]
+app = "python bot.py"
+
+[env]
+PYTHONUNBUFFERED = "1"
