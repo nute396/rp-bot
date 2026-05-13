@@ -1,7 +1,6 @@
 import os
 import logging
-from fastapi import FastAPI, Request
-from telegram import Update, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,62 +10,63 @@ from telegram.ext import (
     filters,
 )
 
-# =====================
-# CONFIG
-# =====================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is missing in environment variables")
-
-ADMIN_IDS = [123456789]  # <-- заміни на свій ID
-
-bot = Bot(token=BOT_TOKEN)
-app = FastAPI()
+    raise ValueError("BOT_TOKEN missing")
 
 logging.basicConfig(level=logging.INFO)
-
-tg_app = Application.builder().token(BOT_TOKEN).build()
 
 # =====================
 # START
 # =====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Бот працює!")
+    keyboard = [
+        [
+            InlineKeyboardButton("🔎 ДБР", callback_data="ДБР"),
+            InlineKeyboardButton("👮 НПС", callback_data="НПС"),
+        ],
+        [
+            InlineKeyboardButton("🛡 СБС", callback_data="СБС"),
+            InlineKeyboardButton("⚖️ НАБС", callback_data="НАБС"),
+        ],
+    ]
+
+    await update.message.reply_text(
+        "👋 Обери фракцію:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 # =====================
-# HANDLER EXAMPLE
+# CALLBACK
 # =====================
 
-tg_app.add_handler(CommandHandler("start", start))
+async def faction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text(f"✅ Обрано: {q.data}")
 
 # =====================
-# WEBHOOK
+# SIMPLE ANSWER
 # =====================
 
-@app.post("/")
-async def webhook(req: Request):
-    data = await req.json()
-    update = Update.de_json(data, bot)
-    await tg_app.process_update(update)
-    return {"ok": True}
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"📝 Отримано: {update.message.text}")
 
 # =====================
-# SET WEBHOOK
+# MAIN APP
 # =====================
 
-@app.on_event("startup")
-async def startup():
-    await bot.set_webhook(f"{WEBHOOK_URL}/")
-    logging.info("Webhook set successfully")
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-# =====================
-# OPTIONAL LOCAL RUN (для ПК)
-# =====================
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(faction))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
+    print("Bot running...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("bot:app", host="0.0.0.0", port=10000)
+    main()
