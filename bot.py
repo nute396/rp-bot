@@ -1,72 +1,49 @@
+import asyncio
 import os
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN missing")
+    raise ValueError("BOT_TOKEN is missing")
 
-logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
 # =====================
 # START
 # =====================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("🔎 ДБР", callback_data="ДБР"),
-            InlineKeyboardButton("👮 НПС", callback_data="НПС"),
+            types.InlineKeyboardButton(text="🔎 ДБР", callback_data="ДБР"),
+            types.InlineKeyboardButton(text="👮 НПС", callback_data="НПС"),
         ],
         [
-            InlineKeyboardButton("🛡 СБС", callback_data="СБС"),
-            InlineKeyboardButton("⚖️ НАБС", callback_data="НАБС"),
+            types.InlineKeyboardButton(text="🛡 СБС", callback_data="СБС"),
+            types.InlineKeyboardButton(text="⚖️ НАБС", callback_data="НАБС"),
         ],
-    ]
+    ])
 
-    await update.message.reply_text(
-        "👋 Обери фракцію:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await message.answer("👋 Обери фракцію:", reply_markup=keyboard)
 
 # =====================
 # CALLBACK
 # =====================
 
-async def faction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.edit_message_text(f"✅ Обрано: {q.data}")
+@dp.callback_query()
+async def callback(call: types.CallbackQuery):
+    await call.message.edit_text(f"✅ Обрано: {call.data}")
 
 # =====================
-# SIMPLE ANSWER
+# MAIN
 # =====================
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"📝 Отримано: {update.message.text}")
-
-# =====================
-# MAIN APP
-# =====================
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(faction))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-    print("Bot running...")
-    app.run_polling()
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
